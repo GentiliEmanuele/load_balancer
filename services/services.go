@@ -171,23 +171,19 @@ func (state *LoadBalancer) UpdateAvailableServers(updated Updated, done *Done) e
 		//Check if all server is in the updated list
 		if checkAvailability(key, updated, nil) == false {
 			//If a server there isn't we must remove it from the list and switch the pending request
-			state.Mutex.Lock()
 			delete(state.NumberOfPending, key)
 			delete(state.ChoiceProbability, key)
 			delete(state.Preferences, key)
-			state.Mutex.Unlock()
 			fmt.Printf("The server %s is failed!\n", key)
 		}
 	}
 	for key := range updated {
 		//Check if there are new servers
 		if checkAvailability(key, nil, state.NumberOfPending) == false {
-			state.Mutex.Lock()
 			//If a server is not in load balancer list but is the updated list add it in the load balancer list
 			state.NumberOfPending[key] = 0
 			//Mechanism for update probability vector when new server is detected
 			state.addNewProbItem(key)
-			state.Mutex.Unlock()
 		}
 	}
 	return nil
