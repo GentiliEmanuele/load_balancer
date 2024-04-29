@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/rpc"
 	"os"
+	"sync"
 )
 
 func main() {
@@ -39,6 +40,7 @@ func playOnLoadBalancer(ip string, port string) {
 		NumberOfReceivedRequest: 0,
 		Preferences:             initServerProb(listOfServices),
 		NumberOfPending:         initNumberOfPending(listOfServices),
+		Mutex:                   sync.RWMutex{},
 	}
 	//Wait request from client and update from registry
 	loadBalancer := rpc.NewServer()

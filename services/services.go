@@ -7,6 +7,7 @@ import (
 	rand2 "math/rand"
 	"net/rpc"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -17,6 +18,7 @@ type LoadBalancer struct {
 	MeanAverageResponseTime float64
 	NumberOfReceivedRequest int
 	Preferences             map[string]float64
+	Mutex                   sync.RWMutex
 }
 
 type Args struct {
@@ -57,6 +59,7 @@ func (state *LoadBalancer) ServeRequest(args Args, result *Result) error {
 
 func (state *LoadBalancer) sendRequestToOneServer(service string, args Args, result *Result) error {
 	serverName := state.chooseFirstServer()
+	state.NumberOfPending[serverName]++
 	server := state.connect(serverName)
 	fmt.Printf("Send request to %s \n", serverName)
 	start := time.Now()
@@ -73,7 +76,6 @@ func (state *LoadBalancer) sendRequestToOneServer(service string, args Args, res
 	end := time.Now()
 	responseTime := end.Sub(start)
 	state.updateProbability(serverName, responseTime)
-	state.printState()
 	return nil
 }
 
@@ -117,7 +119,6 @@ func (state *LoadBalancer) sendRequestToTwoServer(service string, args Args, res
 				state.NumberOfPending[serverName2]--
 				fmt.Printf("Computation for the service %s, of the server %s was interrupted from the server %s \n", args.Service, serverName2, serverName1)
 			}
-			state.printState()
 			return nil, nil
 		case <-done2.Done:
 			if done2.Error != nil {
@@ -145,7 +146,6 @@ func (state *LoadBalancer) sendRequestToTwoServer(service string, args Args, res
 				state.NumberOfPending[serverName1]--
 				fmt.Printf("Computation of the server %s was interrupted from the server %s \n", serverName2, serverName1)
 			}
-			state.printState()
 			return nil, nil
 		}
 	}
@@ -171,19 +171,23 @@ func (state *LoadBalancer) UpdateAvailableServers(updated Updated, done *Done) e
 		//Check if all server is in the updated list
 		if checkAvailability(key, updated, nil) == false {
 			//If a server there isn't we must remove it from the list and switch the pending request
+			state.Mutex.Lock()
 			delete(state.NumberOfPending, key)
 			delete(state.ChoiceProbability, key)
 			delete(state.Preferences, key)
+			state.Mutex.Unlock()
 			fmt.Printf("The server %s is failed!\n", key)
 		}
 	}
 	for key := range updated {
 		//Check if there are new servers
 		if checkAvailability(key, nil, state.NumberOfPending) == false {
+			state.Mutex.Lock()
 			//If a server is not in load balancer list but is the updated list add it in the load balancer list
 			state.NumberOfPending[key] = 0
 			//Mechanism for update probability vector when new server is detected
 			state.addNewProbItem(key)
+			state.Mutex.Unlock()
 		}
 	}
 	return nil
@@ -210,13 +214,16 @@ func checkAvailability(server string, list map[string]string, list2 map[string]i
 }
 
 func (state *LoadBalancer) chooseFirstServer() string {
+	state.Mutex.Lock()
 	if len(state.NumberOfPending) == 1 {
 		for key := range state.NumberOfPending {
+			state.Mutex.Unlock()
 			return key
 		}
 	}
 	if len(state.NumberOfPending) == 0 {
 		fmt.Printf("No server available now \n")
+		state.Mutex.Unlock()
 		return ""
 	} else {
 		minValue := math.MaxInt64
@@ -234,6 +241,7 @@ func (state *LoadBalancer) chooseFirstServer() string {
 				secondMinKey = key
 			}
 		}
+		state.Mutex.Unlock()
 		if len(minKey) > 0 && len(secondMinKey) > 0 {
 			rand := rand2.Intn(3)
 			if rand%2 == 0 {
@@ -251,18 +259,21 @@ func (state *LoadBalancer) chooseFirstServer() string {
 func (state *LoadBalancer) chooseSecondServer(firstServer string) string {
 	maxValue := 0.0
 	maxKey := ""
+	state.Mutex.Lock()
 	for key, value := range state.ChoiceProbability {
 		if value >= maxValue && strings.Compare(firstServer, key) != 0 {
 			maxValue = value
 			maxKey = key
 		}
 	}
+	state.Mutex.Unlock()
 	return maxKey
 }
 
 func (state *LoadBalancer) updateProbability(server string, responseTime time.Duration) {
 	alpha := 0.1
 	sum := 0.
+	state.Mutex.Lock()
 	//Update preferences
 	state.Preferences[server] = state.Preferences[server] - alpha*(responseTime.Seconds()-state.MeanAverageResponseTime)*(1-state.ChoiceProbability[server])
 	for key, value := range state.ChoiceProbability {
@@ -279,13 +290,16 @@ func (state *LoadBalancer) updateProbability(server string, responseTime time.Du
 	}
 	state.MeanAverageResponseTime = (state.MeanAverageResponseTime*float64(state.NumberOfReceivedRequest) + responseTime.Seconds()) / float64(state.NumberOfReceivedRequest+1)
 	state.NumberOfReceivedRequest++
+	state.Mutex.Unlock()
 }
 
 func (state *LoadBalancer) addNewProbItem(newServer string) {
+	state.Mutex.Lock()
 	if len(state.ChoiceProbability) == 0 {
 		//If there isn't other servers
 		state.Preferences[newServer] = 0
 		state.ChoiceProbability[newServer] = 1
+		state.Mutex.Unlock()
 	} else {
 		sum := 0.
 		for _, value := range state.Preferences {
@@ -304,6 +318,7 @@ func (state *LoadBalancer) addNewProbItem(newServer string) {
 			state.ChoiceProbability[key] = math.Exp(state.Preferences[key]) / sum
 			sum = 0
 		}
+		state.Mutex.Unlock()
 	}
 }
 
@@ -316,17 +331,4 @@ func (state *LoadBalancer) connect(serverName string) *rpc.Client {
 		delete(state.ChoiceProbability, serverName)
 	}
 	return server
-}
-
-func (state *LoadBalancer) printState() {
-	fmt.Printf("------------------------------------------------\n")
-	fmt.Printf("Number of pending request for each server: \n")
-	for s, i := range state.NumberOfPending {
-		fmt.Printf("Server %s : %d\n", s, i)
-	}
-	fmt.Printf("Choice probability for each server: \n")
-	for s, f := range state.ChoiceProbability {
-		fmt.Printf("Server %s : %f\n", s, f)
-	}
-	fmt.Printf("------------------------------------------------\n")
 }
