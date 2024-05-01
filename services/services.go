@@ -62,6 +62,7 @@ func (state *LoadBalancer) ServeRequest(args Args, result *Result) error {
 func (state *LoadBalancer) sendRequestToOneServer(service string, args Args, result *Result) error {
 	serverName := state.chooseFirstServer()
 	state.NumberOfPending[serverName]++
+	state.History[serverName]++
 	server := state.connect(serverName)
 	fmt.Printf("Send request to %s \n", serverName)
 	start := time.Now()
@@ -86,9 +87,9 @@ func (state *LoadBalancer) sendRequestToTwoServer(service string, args Args, res
 	//Choose the two server and count the new request
 	serverName1 := state.chooseFirstServer()
 	state.NumberOfPending[serverName1]++
+	state.History[serverName1]++
 	serverName2 := state.chooseSecondServer(serverName1)
 	state.NumberOfPending[serverName2]++
-	state.History[serverName2]++
 	fmt.Printf("Send request to %s and %s \n", serverName1, serverName2)
 	server1 := state.connect(serverName1)
 	server2 := state.connect(serverName2)
