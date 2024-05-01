@@ -41,6 +41,7 @@ func playOnLoadBalancer(ip string, port string) {
 		Preferences:             initServerProb(listOfServices),
 		NumberOfPending:         initNumberOfPending(listOfServices),
 		Mutex:                   sync.RWMutex{},
+		History:                 initNumberOfPending(listOfServices),
 	}
 	//Wait request from client and update from registry
 	loadBalancer := rpc.NewServer()

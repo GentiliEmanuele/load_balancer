@@ -19,6 +19,7 @@ type LoadBalancer struct {
 	NumberOfReceivedRequest int
 	Preferences             map[string]float64
 	Mutex                   sync.RWMutex
+	History                 map[string]int
 }
 
 type Args struct {
@@ -33,6 +34,7 @@ type Done bool
 func (state *LoadBalancer) ServeRequest(args Args, result *Result) error {
 	//Format service string
 	service := fmt.Sprintf("Server.%s", args.Service)
+	state.printState()
 	for {
 		if len(state.NumberOfPending) == 0 {
 			//If there are no server available
@@ -60,6 +62,7 @@ func (state *LoadBalancer) ServeRequest(args Args, result *Result) error {
 func (state *LoadBalancer) sendRequestToOneServer(service string, args Args, result *Result) error {
 	serverName := state.chooseFirstServer()
 	state.NumberOfPending[serverName]++
+	state.History[serverName]++
 	server := state.connect(serverName)
 	fmt.Printf("Send request to %s \n", serverName)
 	start := time.Now()
@@ -71,6 +74,7 @@ func (state *LoadBalancer) sendRequestToOneServer(service string, args Args, res
 		delete(state.NumberOfPending, serverName)
 		delete(state.ChoiceProbability, serverName)
 		delete(state.Preferences, serverName)
+		state.History[serverName]++
 		return done.Error
 	}
 	end := time.Now()
@@ -83,8 +87,10 @@ func (state *LoadBalancer) sendRequestToTwoServer(service string, args Args, res
 	//Choose the two server and count the new request
 	serverName1 := state.chooseFirstServer()
 	state.NumberOfPending[serverName1]++
+	state.History[serverName1]++
 	serverName2 := state.chooseSecondServer(serverName1)
 	state.NumberOfPending[serverName2]++
+	state.History[serverName2]++
 	fmt.Printf("Send request to %s and %s \n", serverName1, serverName2)
 	server1 := state.connect(serverName1)
 	server2 := state.connect(serverName2)
@@ -327,4 +333,10 @@ func (state *LoadBalancer) connect(serverName string) *rpc.Client {
 		delete(state.ChoiceProbability, serverName)
 	}
 	return server
+}
+
+func (state *LoadBalancer) printState() {
+	for s, i := range state.History {
+		fmt.Printf("%s : %d \n", s, i)
+	}
 }
