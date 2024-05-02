@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	rand2 "math/rand"
+	"math/rand"
 	"net/rpc"
 	"strings"
 	"sync"
@@ -32,9 +32,9 @@ type Updated map[string]string
 type Done bool
 
 func (state *LoadBalancer) ServeRequest(args Args, result *Result) error {
+	fmt.Printf("Received %s(%d)\n", args.Service, args.Input)
 	//Format service string
 	service := fmt.Sprintf("Server.%s", args.Service)
-	state.printState()
 	for {
 		if len(state.NumberOfPending) == 0 {
 			//If there are no server available
@@ -47,22 +47,21 @@ func (state *LoadBalancer) ServeRequest(args Args, result *Result) error {
 			//If there is one server available
 			err := state.sendRequestToOneServer(service, args, result)
 			if err == nil {
-				return nil
+				break
 			}
 		} else if len(state.NumberOfPending) > 1 {
 			//If there are more than one server
 			errServer1, errServer2 := state.sendRequestToTwoServer(service, args, result)
 			if errServer1 == nil || errServer2 == nil {
-				return nil
+				break
 			}
 		}
 	}
+	return nil
 }
 
 func (state *LoadBalancer) sendRequestToOneServer(service string, args Args, result *Result) error {
 	serverName := state.chooseFirstServer()
-	state.NumberOfPending[serverName]++
-	state.History[serverName]++
 	server := state.connect(serverName)
 	fmt.Printf("Send request to %s \n", serverName)
 	start := time.Now()
@@ -88,9 +87,9 @@ func (state *LoadBalancer) sendRequestToTwoServer(service string, args Args, res
 	serverName1 := state.chooseFirstServer()
 	state.NumberOfPending[serverName1]++
 	state.History[serverName1]++
+	state.printState()
 	serverName2 := state.chooseSecondServer(serverName1)
-	state.NumberOfPending[serverName2]++
-	fmt.Printf("Send request to %s and %s \n", serverName1, serverName2)
+	fmt.Printf("Send request %s(%d) to %s and %s \n", service, args.Input, serverName1, serverName2)
 	server1 := state.connect(serverName1)
 	server2 := state.connect(serverName2)
 	start := time.Now()
@@ -121,7 +120,6 @@ func (state *LoadBalancer) sendRequestToTwoServer(service string, args Args, res
 			if terminated2.Reply == false {
 				fmt.Printf("Computation already terminated")
 			} else {
-				state.NumberOfPending[serverName2]--
 				fmt.Printf("Computation for the service %s, of the server %s was interrupted from the server %s \n", args.Service, serverName2, serverName1)
 			}
 			return nil, nil
@@ -144,12 +142,11 @@ func (state *LoadBalancer) sendRequestToTwoServer(service string, args Args, res
 			end := time.Now()
 			responseTime := end.Sub(start)
 			state.updateProbability(serverName2, responseTime)
-			state.NumberOfPending[serverName2]--
 			if terminated1.Reply == false {
 				fmt.Printf("Computation already terminated")
 			} else {
 				state.NumberOfPending[serverName1]--
-				fmt.Printf("Computation of the server %s was interrupted from the server %s \n", serverName2, serverName1)
+				fmt.Printf("Computation for the service %s, of the server %s was interrupted from the server %s \n", args.Service, serverName2, serverName1)
 			}
 			return nil, nil
 		}
@@ -227,34 +224,34 @@ func (state *LoadBalancer) chooseFirstServer() string {
 		state.Mutex.Unlock()
 		return ""
 	} else {
-		minValue := math.MaxInt64
-		secondMinValue := math.MaxInt64
-		minKey := ""
-		secondMinKey := ""
-		for key, value := range state.NumberOfPending {
-			if value < minValue {
-				secondMinValue = minValue
-				secondMinKey = minKey
-				minValue = value
-				minKey = key
-			} else if value < secondMinValue {
-				secondMinValue = value
-				secondMinKey = key
-			}
+		minLoadServers := findMinus(state.NumberOfPending)
+		if len(minLoadServers)-1 != 0 {
+			index := rand.Intn(len(minLoadServers) - 1)
+			state.Mutex.Unlock()
+			return minLoadServers[index]
+		} else {
+			state.Mutex.Unlock()
+			return minLoadServers[0]
 		}
-		state.Mutex.Unlock()
-		if len(minKey) > 0 && len(secondMinKey) > 0 {
-			rand := rand2.Intn(3)
-			if rand%2 == 0 {
-				return minKey
-			} else {
-				return secondMinKey
-			}
-		} else if len(secondMinKey) == 0 {
-			return minKey
-		}
-		return minKey
 	}
+}
+
+func findMinus(servers map[string]int) []string {
+	minServers := make([]string, 0)
+	minLoad := math.MaxInt
+	//Find min load
+	for _, load := range servers {
+		if load < minLoad {
+			minLoad = load
+		}
+	}
+	//group by min load
+	for s, load := range servers {
+		if load == minLoad {
+			minServers = append(minServers, s)
+		}
+	}
+	return minServers
 }
 
 func (state *LoadBalancer) chooseSecondServer(firstServer string) string {

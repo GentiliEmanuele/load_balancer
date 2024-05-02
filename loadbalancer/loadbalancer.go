@@ -30,9 +30,6 @@ func playOnLoadBalancer(ip string, port string) {
 	}
 	ip = fmt.Sprintf("%s:%s", ip, port)
 	err = registry.Call("Registry.GetServices", ip, &listOfServices)
-	for key, value := range listOfServices {
-		fmt.Printf(key + " " + value + "\n")
-	}
 	//Create a state for loadBalancer using the list of services
 	loadBalancerState := services.LoadBalancer{
 		ChoiceProbability:       initServerProb(listOfServices),
@@ -49,7 +46,6 @@ func playOnLoadBalancer(ip string, port string) {
 	if err != nil {
 		fmt.Printf("An error occurred %s", err)
 	}
-
 	fmt.Printf("The load balancer listening on the port %s\n", port)
 	addr := fmt.Sprintf(":%s", port)
 	lis, err := net.Listen("tcp", addr)
