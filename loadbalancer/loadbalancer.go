@@ -26,7 +26,7 @@ func playOnLoadBalancer(ip string, port string) {
 	//For all services offered send they to the service registry
 	registry, err := rpc.Dial("tcp", registryAddress)
 	if err != nil {
-		fmt.Printf("An error occurred %s", err)
+		fmt.Printf("An error occurred %s\n", err)
 	}
 	ip = fmt.Sprintf("%s:%s", ip, port)
 	err = registry.Call("Registry.GetServices", ip, &listOfServices)

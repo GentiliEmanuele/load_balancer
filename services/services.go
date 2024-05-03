@@ -89,10 +89,11 @@ func (state *LoadBalancer) sendRequestToTwoServer(service string, args Args, res
 		case <-done1.Done:
 			if done1.Error != nil {
 				//If during computation the server has got an error we remove it from scheduling
-				fmt.Printf("Error: %s", done1.Error)
+				fmt.Printf("Error: %s\n", done1.Error)
 				state.lockedDeleteItem(serverName1)
 				if done2.Error != nil {
 					state.lockedDeleteItem(serverName2)
+					fmt.Printf("The servers %s and %s were failed, search new servers\n", serverName1, serverName2)
 					return done1.Error, done2.Error
 				} else {
 					break
@@ -116,6 +117,7 @@ func (state *LoadBalancer) sendRequestToTwoServer(service string, args Args, res
 				state.lockedDeleteItem(serverName2)
 				if done1.Error != nil {
 					state.lockedDeleteItem(serverName1)
+					fmt.Printf("The servers %s and %s were failed, search new servers\n", serverName1, serverName2)
 					return done1.Error, done2.Error
 				} else {
 					break
@@ -169,6 +171,7 @@ func (state *LoadBalancer) UpdateAvailableServers(updated Updated, done *Done) e
 			state.lockedAddNewItem(key)
 		}
 	}
+	*done = true
 	return nil
 }
 
@@ -226,7 +229,7 @@ func (state *LoadBalancer) findMinus(ignored string) []string {
 	}
 	//group by min load
 	for s, load := range state.NumberOfPending {
-		if load == minLoad {
+		if load == minLoad && strings.Compare(s, ignored) != 0 {
 			minServers = append(minServers, s)
 		}
 	}
