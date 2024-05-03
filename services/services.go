@@ -3,7 +3,7 @@ package services
 import (
 	"errors"
 	"fmt"
-	_type "loadbalancer1/type"
+	_types "loadbalancer1/types"
 	"math"
 	"math/rand"
 	"net/rpc"
@@ -19,7 +19,7 @@ type LoadBalancer struct {
 	History         map[string]int
 }
 
-func (state *LoadBalancer) ServeRequest(args _type.Args, result *_type.Result) error {
+func (state *LoadBalancer) ServeRequest(args _types.Args, result *_types.Result) error {
 	fmt.Printf("Received %s(%d)\n", args.Service, args.Input)
 	//Format service string
 	service := fmt.Sprintf("Server.%s", args.Service)
@@ -48,7 +48,31 @@ func (state *LoadBalancer) ServeRequest(args _type.Args, result *_type.Result) e
 	return nil
 }
 
-func (state *LoadBalancer) sendRequestToOneServer(service string, args _type.Args, result *_type.Result) error {
+func (state *LoadBalancer) UpdateAvailableServers(updated _types.Updated, idle *_types.Idle) error {
+	state.Mutex.Lock()
+	for key, nPending := range state.NumberOfPending {
+		//Check if all server is in the updated list
+		if checkAvailability(key, updated, nil) == false {
+			//If a server there isn't we must remove it from the list and switch the pending request
+			delete(state.NumberOfPending, key)
+			fmt.Printf("The server %s is failed!\n", key)
+		}
+		if nPending == 0 && checkAvailability(key, nil, state.NumberOfPending) == true {
+			*idle = append(*idle, key)
+		}
+	}
+	state.Mutex.Unlock()
+	for key := range updated {
+		//Check if there are new servers
+		if checkAvailability(key, nil, state.NumberOfPending) == false {
+			//If a server is not in load balancer list but is the updated list add it in the load balancer list
+			state.lockedAddNewItem(key)
+		}
+	}
+	return nil
+}
+
+func (state *LoadBalancer) sendRequestToOneServer(service string, args _types.Args, result *_types.Result) error {
 	serverName := state.chooseServer("")
 	state.lockedIncrementPending(serverName)
 	server := state.connect(serverName)
@@ -65,70 +89,74 @@ func (state *LoadBalancer) sendRequestToOneServer(service string, args _type.Arg
 	return nil
 }
 
-func (state *LoadBalancer) sendRequestToTwoServer(service string, args _type.Args, result *_type.Result) (error, error) {
+func (state *LoadBalancer) sendRequestToTwoServer(service string, args _types.Args, result *_types.Result) (error, error) {
 	//Choose the two server and count the new request
 	serverName1 := state.chooseServer("")
 	serverName2 := state.chooseServer(serverName1)
 	state.lockedIncrementPending(serverName1)
 	state.lockedIncrementPending(serverName2)
-	state.updateAndPrintHistory(serverName1)
-	state.updateAndPrintHistory(serverName2)
 	fmt.Printf("Send request %s(%d) to %s and %s \n", service, args.Input, serverName1, serverName2)
 	server1 := state.connect(serverName1)
 	server2 := state.connect(serverName2)
 	done1 := server1.Go(service, args.Input, result, nil)
 	done2 := server2.Go(service, args.Input, result, nil)
-	for {
-		select {
-		case <-done1.Done:
-			if done1.Error != nil {
-				//If during computation the server has got an error we remove it from scheduling
-				fmt.Printf("Error: %s\n", done1.Error)
-				state.lockedDeleteItem(serverName1)
+	select {
+	case <-done1.Done:
+		if done1.Error != nil {
+			//If during computation the server has got an error we remove it from scheduling
+			fmt.Printf("Error: %s\n", done1.Error)
+			state.lockedDeleteItem(serverName1)
+			select {
+			//If the first server fail, wait the second server
+			case <-done2.Done:
 				if done2.Error != nil {
 					state.lockedDeleteItem(serverName2)
 					fmt.Printf("The servers %s and %s were failed, search new servers\n", serverName1, serverName2)
 					return done1.Error, done2.Error
 				} else {
-					break
+					return done1.Error, nil
 				}
 			}
-			//At this point the computation of the server was complete, and it can stop the other computation
-			terminated2 := server2.Go("Server.StopComputation", true, nil, nil)
-			terminated2 = <-terminated2.Done
-			state.lockedDecrementPending(serverName1)
-			state.lockedDecrementPending(serverName2)
-			if terminated2.Reply == false {
-				fmt.Printf("Computation already terminated")
-			} else {
-				fmt.Printf("Computation for the service %s, of the server %s was interrupted from the server %s \n", args.Service, serverName2, serverName1)
-			}
-			return nil, nil
-		case <-done2.Done:
-			if done2.Error != nil {
-				//If during computation the server has got an error we remove it from scheduling
-				fmt.Printf("Error: %s", done2.Error)
-				state.lockedDeleteItem(serverName2)
+		}
+		//At this point the computation of the server was complete, and it can stop the other computation
+		terminated2 := server2.Go("Server.StopComputation", true, nil, nil)
+		terminated2 = <-terminated2.Done
+		state.lockedDecrementPending(serverName1)
+		state.lockedDecrementPending(serverName2)
+		if terminated2.Reply == false {
+			fmt.Printf("Computation already terminated")
+		} else {
+			fmt.Printf("Computation for the service %s, of the server %s was interrupted from the server %s \n", args.Service, serverName2, serverName1)
+		}
+		return nil, nil
+	case <-done2.Done:
+		if done2.Error != nil {
+			//If during computation the server has got an error we remove it from scheduling
+			fmt.Printf("An error occurred: %s\n", done2.Error)
+			state.lockedDeleteItem(serverName2)
+			select {
+			//If the first server fail, wait the second server
+			case <-done1.Done:
 				if done1.Error != nil {
 					state.lockedDeleteItem(serverName1)
 					fmt.Printf("The servers %s and %s were failed, search new servers\n", serverName1, serverName2)
 					return done1.Error, done2.Error
 				} else {
-					break
+					return nil, done2.Error
 				}
 			}
-			//At this point the computation of the server was complete, and it can stop the other computation
-			terminated1 := server1.Go("Server.StopComputation", true, nil, nil)
-			terminated1 = <-terminated1.Done
-			if terminated1.Reply == false {
-				fmt.Printf("Computation already terminated")
-			} else {
-				state.lockedDecrementPending(serverName1)
-				state.lockedDecrementPending(serverName2)
-				fmt.Printf("Computation for the service %s, of the server %s was interrupted from the server %s \n", args.Service, serverName2, serverName1)
-			}
-			return nil, nil
 		}
+		//At this point the computation of the server was complete, and it can stop the other computation
+		terminated1 := server1.Go("Server.StopComputation", true, nil, nil)
+		terminated1 = <-terminated1.Done
+		if terminated1.Reply == false {
+			fmt.Printf("Computation already terminated")
+		} else {
+			state.lockedDecrementPending(serverName1)
+			state.lockedDecrementPending(serverName2)
+			fmt.Printf("Computation for the service %s, of the server %s was interrupted from the server %s \n", args.Service, serverName2, serverName1)
+		}
+		return nil, nil
 	}
 }
 
@@ -145,28 +173,6 @@ func (state *LoadBalancer) waitOneAvailableServer() error {
 			return errors.New("no server available now\n")
 		}
 	}
-}
-
-func (state *LoadBalancer) UpdateAvailableServers(updated _type.Updated, done *_type.Done) error {
-	state.Mutex.Lock()
-	for key := range state.NumberOfPending {
-		//Check if all server is in the updated list
-		if checkAvailability(key, updated, nil) == false {
-			//If a server there isn't we must remove it from the list and switch the pending request
-			delete(state.NumberOfPending, key)
-			fmt.Printf("The server %s is failed!\n", key)
-		}
-	}
-	state.Mutex.Unlock()
-	for key := range updated {
-		//Check if there are new servers
-		if checkAvailability(key, nil, state.NumberOfPending) == false {
-			//If a server is not in load balancer list but is the updated list add it in the load balancer list
-			state.lockedAddNewItem(key)
-		}
-	}
-	*done = true
-	return nil
 }
 
 func checkAvailability(server string, list map[string]string, list2 map[string]int) bool {
@@ -268,10 +274,10 @@ func (state *LoadBalancer) lockedAddNewItem(server string) {
 func (state *LoadBalancer) updateAndPrintHistory(server string) {
 	state.Mutex.Lock()
 	state.History[server]++
-	fmt.Printf("--------------------------------------------------")
+	fmt.Printf("--------------------------------------------------\n")
 	for s, i := range state.History {
 		fmt.Printf("%s : %d \n", s, i)
 	}
-	fmt.Printf("--------------------------------------------------")
+	fmt.Printf("--------------------------------------------------\n")
 	state.Mutex.Unlock()
 }

@@ -1,4 +1,4 @@
-package _type
+package types
 
 type Args struct {
 	Service string
@@ -7,4 +7,4 @@ type Args struct {
 
 type Result int
 type Updated map[string]string
-type Done bool
+type Idle []string
