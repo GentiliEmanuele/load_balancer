@@ -3,6 +3,7 @@ package services
 import (
 	"errors"
 	"fmt"
+	_type "loadbalancer1/type"
 	"math"
 	"math/rand"
 	"net/rpc"
@@ -18,16 +19,7 @@ type LoadBalancer struct {
 	History         map[string]int
 }
 
-type Args struct {
-	Service string
-	Input   int
-}
-
-type Result int
-type Updated map[string]string
-type Done bool
-
-func (state *LoadBalancer) ServeRequest(args Args, result *Result) error {
+func (state *LoadBalancer) ServeRequest(args _type.Args, result *_type.Result) error {
 	fmt.Printf("Received %s(%d)\n", args.Service, args.Input)
 	//Format service string
 	service := fmt.Sprintf("Server.%s", args.Service)
@@ -56,7 +48,7 @@ func (state *LoadBalancer) ServeRequest(args Args, result *Result) error {
 	return nil
 }
 
-func (state *LoadBalancer) sendRequestToOneServer(service string, args Args, result *Result) error {
+func (state *LoadBalancer) sendRequestToOneServer(service string, args _type.Args, result *_type.Result) error {
 	serverName := state.chooseServer("")
 	state.lockedIncrementPending(serverName)
 	server := state.connect(serverName)
@@ -73,12 +65,14 @@ func (state *LoadBalancer) sendRequestToOneServer(service string, args Args, res
 	return nil
 }
 
-func (state *LoadBalancer) sendRequestToTwoServer(service string, args Args, result *Result) (error, error) {
+func (state *LoadBalancer) sendRequestToTwoServer(service string, args _type.Args, result *_type.Result) (error, error) {
 	//Choose the two server and count the new request
 	serverName1 := state.chooseServer("")
 	serverName2 := state.chooseServer(serverName1)
 	state.lockedIncrementPending(serverName1)
 	state.lockedIncrementPending(serverName2)
+	state.updateAndPrintHistory(serverName1)
+	state.updateAndPrintHistory(serverName2)
 	fmt.Printf("Send request %s(%d) to %s and %s \n", service, args.Input, serverName1, serverName2)
 	server1 := state.connect(serverName1)
 	server2 := state.connect(serverName2)
@@ -153,7 +147,7 @@ func (state *LoadBalancer) waitOneAvailableServer() error {
 	}
 }
 
-func (state *LoadBalancer) UpdateAvailableServers(updated Updated, done *Done) error {
+func (state *LoadBalancer) UpdateAvailableServers(updated _type.Updated, done *_type.Done) error {
 	state.Mutex.Lock()
 	for key := range state.NumberOfPending {
 		//Check if all server is in the updated list
@@ -271,8 +265,13 @@ func (state *LoadBalancer) lockedAddNewItem(server string) {
 	state.Mutex.Unlock()
 }
 
-func (state *LoadBalancer) printHistory() {
+func (state *LoadBalancer) updateAndPrintHistory(server string) {
+	state.Mutex.Lock()
+	state.History[server]++
+	fmt.Printf("--------------------------------------------------")
 	for s, i := range state.History {
 		fmt.Printf("%s : %d \n", s, i)
 	}
+	fmt.Printf("--------------------------------------------------")
+	state.Mutex.Unlock()
 }
