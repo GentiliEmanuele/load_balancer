@@ -32,13 +32,9 @@ func playOnLoadBalancer(ip string, port string) {
 	err = registry.Call("Registry.GetServices", ip, &listOfServices)
 	//Create a state for loadBalancer using the list of services
 	loadBalancerState := services.LoadBalancer{
-		ChoiceProbability:       initServerProb(listOfServices),
-		MeanAverageResponseTime: float64(0),
-		NumberOfReceivedRequest: 0,
-		Preferences:             initServerProb(listOfServices),
-		NumberOfPending:         initNumberOfPending(listOfServices),
-		Mutex:                   sync.RWMutex{},
-		History:                 initNumberOfPending(listOfServices),
+		NumberOfPending: initNumberOfPending(listOfServices),
+		Mutex:           sync.RWMutex{},
+		History:         initNumberOfPending(listOfServices),
 	}
 	//Wait request from client and update from registry
 	loadBalancer := rpc.NewServer()
@@ -66,14 +62,6 @@ func GetOutboundIP() net.IP {
 	}(conn)
 	localAddr := conn.LocalAddr().(*net.UDPAddr)
 	return localAddr.IP
-}
-
-func initServerProb(servers map[string]string) map[string]float64 {
-	state := make(map[string]float64)
-	for key := range servers {
-		state[key] = 1.0 / float64(len(servers))
-	}
-	return state
 }
 
 func initNumberOfPending(servers map[string]string) map[string]int {
