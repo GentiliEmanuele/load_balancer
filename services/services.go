@@ -20,9 +20,8 @@ type LoadBalancer struct {
 }
 
 func (state *LoadBalancer) ServeRequest(args _types.Args, result *_types.Result) error {
-	fmt.Printf("Received %s(%d)\n", args.Service, args.Input)
 	//Format service string
-	service := fmt.Sprintf("Server.%s", args.Service)
+	service := state.formatServiceName(args.Service)
 	for {
 		if len(state.NumberOfPending) == 0 {
 			//If there are no server available
@@ -238,12 +237,15 @@ func (state *LoadBalancer) findMinus(ignored string) []string {
 }
 
 func (state *LoadBalancer) connect(serverName string) *rpc.Client {
+	state.Mutex.Lock()
 	server, err := rpc.Dial("tcp", serverName)
 	if err != nil {
 		fmt.Printf("An error occurred %s on the serverName %s", err, serverName)
 		//Delete the server from the balancing list
 		state.lockedDeleteItem(serverName)
+		state.Mutex.Unlock()
 	}
+	state.Mutex.Unlock()
 	return server
 }
 
@@ -269,6 +271,13 @@ func (state *LoadBalancer) lockedAddNewItem(server string) {
 	state.Mutex.Lock()
 	state.NumberOfPending[server] = 0
 	state.Mutex.Unlock()
+}
+
+func (state *LoadBalancer) formatServiceName(service string) string {
+	state.Mutex.Lock()
+	service = fmt.Sprintf("Server.%s", service)
+	state.Mutex.Unlock()
+	return service
 }
 
 func (state *LoadBalancer) updateAndPrintHistory(server string) {
