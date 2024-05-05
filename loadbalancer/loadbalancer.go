@@ -42,7 +42,6 @@ func playOnLoadBalancer(ip string, port string) {
 	if err != nil {
 		fmt.Printf("An error occurred %s", err)
 	}
-	fmt.Printf("The load balancer listening on the port %s\n", port)
 	addr := fmt.Sprintf(":%s", port)
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
