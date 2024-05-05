@@ -54,7 +54,6 @@ func (state *LoadBalancer) UpdateAvailableServers(updated _types.Updated, idle *
 		if checkAvailability(key, updated, nil) == false {
 			//If a server there isn't we must remove it from the list and switch the pending request
 			delete(state.NumberOfPending, key)
-			fmt.Printf("The server %s is failed!\n", key)
 		}
 		if nPending == 0 && checkAvailability(key, nil, state.NumberOfPending) == true {
 			*idle = append(*idle, key)
@@ -75,7 +74,6 @@ func (state *LoadBalancer) sendRequestToOneServer(service string, args _types.Ar
 	serverName := state.chooseServer("")
 	state.lockedIncrementPending(serverName)
 	server := state.connect(serverName)
-	fmt.Printf("Send request to %s \n", serverName)
 	done := server.Go(service, args.Input, result, nil)
 	done = <-done.Done
 	if done.Error != nil {
@@ -94,7 +92,6 @@ func (state *LoadBalancer) sendRequestToTwoServer(service string, args _types.Ar
 	serverName2 := state.chooseServer(serverName1)
 	state.lockedIncrementPending(serverName1)
 	state.lockedIncrementPending(serverName2)
-	fmt.Printf("Send request %s(%d) to %s and %s \n", service, args.Input, serverName1, serverName2)
 	server1 := state.connect(serverName1)
 	server2 := state.connect(serverName2)
 	done1 := server1.Go(service, args.Input, result, nil)
