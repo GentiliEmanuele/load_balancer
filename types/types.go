@@ -6,5 +6,5 @@ type Args struct {
 }
 
 type Result int
-type Updated map[string]string
+type Updated []string
 type Idle []string

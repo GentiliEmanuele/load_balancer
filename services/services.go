@@ -51,18 +51,18 @@ func (state *LoadBalancer) UpdateAvailableServers(updated _types.Updated, idle *
 	state.Mutex.Lock()
 	for key, nPending := range state.NumberOfPending {
 		//Check if all server is in the updated list
-		if checkAvailability(key, updated, nil) == false {
+		if checkInSlice(updated, key) == false {
 			//If a server there isn't we must remove it from the list and switch the pending request
 			delete(state.NumberOfPending, key)
 		}
-		if nPending == 0 && checkAvailability(key, nil, state.NumberOfPending) == true {
+		if nPending == 0 && checkInMap(key, state.NumberOfPending) == true {
 			*idle = append(*idle, key)
 		}
 	}
 	state.Mutex.Unlock()
-	for key := range updated {
+	for _, key := range *idle {
 		//Check if there are new servers
-		if checkAvailability(key, nil, state.NumberOfPending) == false {
+		if checkInMap(key, state.NumberOfPending) == false {
 			//If a server is not in load balancer list but is the updated list add it in the load balancer list
 			state.lockedAddNewItem(key)
 		}
@@ -171,24 +171,22 @@ func (state *LoadBalancer) waitOneAvailableServer() error {
 	}
 }
 
-func checkAvailability(server string, list map[string]string, list2 map[string]int) bool {
-	in := false
-	if list != nil {
-		for key := range list {
-			if strings.Compare(key, server) == 0 {
-				in = true
-				break
-			}
-		}
-	} else if list2 != nil {
-		for key := range list2 {
-			if strings.Compare(key, server) == 0 {
-				in = true
-				break
-			}
+func checkInMap(server string, list map[string]int) bool {
+	for s := range list {
+		if strings.Compare(s, server) == 0 {
+			return true
 		}
 	}
-	return in
+	return false
+}
+
+func checkInSlice(slice []string, item string) bool {
+	for _, s := range slice {
+		if strings.Compare(s, item) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (state *LoadBalancer) chooseServer(ignoredServer string) string {

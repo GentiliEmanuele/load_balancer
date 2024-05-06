@@ -20,8 +20,8 @@ func main() {
 }
 
 func playOnLoadBalancer(ip string, port string) {
-	var listOfServices map[string]string
-	//Get the listOfServices from registry
+	var listOfServer []string
+	//Get the listOfServer from registry
 	registryAddress := os.Getenv("REGISTRY")
 	//For all services offered send they to the service registry
 	registry, err := rpc.Dial("tcp", registryAddress)
@@ -29,12 +29,12 @@ func playOnLoadBalancer(ip string, port string) {
 		fmt.Printf("An error occurred %s\n", err)
 	}
 	ip = fmt.Sprintf("%s:%s", ip, port)
-	err = registry.Call("Registry.GetServices", ip, &listOfServices)
+	err = registry.Call("Registry.GetServices", ip, &listOfServer)
 	//Create a state for loadBalancer using the list of services
 	loadBalancerState := services.LoadBalancer{
-		NumberOfPending: initNumberOfPending(listOfServices),
+		NumberOfPending: initNumberOfPending(listOfServer),
 		Mutex:           sync.RWMutex{},
-		History:         initNumberOfPending(listOfServices),
+		History:         initNumberOfPending(listOfServer),
 	}
 	//Wait request from client and update from registry
 	loadBalancer := rpc.NewServer()
@@ -63,10 +63,10 @@ func GetOutboundIP() net.IP {
 	return localAddr.IP
 }
 
-func initNumberOfPending(servers map[string]string) map[string]int {
+func initNumberOfPending(servers []string) map[string]int {
 	pending := make(map[string]int)
-	for key := range servers {
-		pending[key] = 0
+	for _, address := range servers {
+		pending[address] = 0
 	}
 	return pending
 }
