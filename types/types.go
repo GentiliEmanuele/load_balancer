@@ -5,6 +5,7 @@ type Args struct {
 	Input   int
 }
 
+type Server string
+
 type Result int
 type Updated []string
-type Idle []string

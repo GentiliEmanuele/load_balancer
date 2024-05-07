@@ -47,25 +47,10 @@ func (state *LoadBalancer) ServeRequest(args _types.Args, result *_types.Result)
 	return nil
 }
 
-func (state *LoadBalancer) UpdateAvailableServers(updated _types.Updated, idle *_types.Idle) error {
-	state.Mutex.Lock()
-	for key, nPending := range state.NumberOfPending {
-		//Check if all server is in the updated list
-		if checkInSlice(updated, key) == false {
-			//If a server there isn't we must remove it from the list and switch the pending request
-			delete(state.NumberOfPending, key)
-		}
-		if nPending == 0 && checkInMap(key, state.NumberOfPending) == true {
-			*idle = append(*idle, key)
-		}
-	}
-	state.Mutex.Unlock()
-	for _, key := range *idle {
-		//Check if there are new servers
-		if checkInMap(key, state.NumberOfPending) == false {
-			//If a server is not in load balancer list but is the updated list add it in the load balancer list
-			state.lockedAddNewItem(key)
-		}
+func (state *LoadBalancer) AddNewServer(server _types.Server, updated *_types.Updated) error {
+	state.lockedAddNewItem(string(server))
+	for s := range state.NumberOfPending {
+		*updated = append(*updated, s)
 	}
 	return nil
 }
@@ -169,24 +154,6 @@ func (state *LoadBalancer) waitOneAvailableServer() error {
 			return errors.New("no server available now\n")
 		}
 	}
-}
-
-func checkInMap(server string, list map[string]int) bool {
-	for s := range list {
-		if strings.Compare(s, server) == 0 {
-			return true
-		}
-	}
-	return false
-}
-
-func checkInSlice(slice []string, item string) bool {
-	for _, s := range slice {
-		if strings.Compare(s, item) == 0 {
-			return true
-		}
-	}
-	return false
 }
 
 func (state *LoadBalancer) chooseServer(ignoredServer string) string {
