@@ -212,6 +212,7 @@ func (state *LoadBalancer) connect() (*rpc.Client, string, error) {
 			state.NumberOfFails[serverName]++
 			if state.NumberOfFails[serverName] > state.Tolerance {
 				delete(state.NumberOfPending, serverName)
+				delete(state.NumberOfFails, serverName)
 			}
 			if len(state.NumberOfPending) == 0 {
 				return nil, "", err
@@ -234,6 +235,7 @@ func (state *LoadBalancer) handleServerFailure(server string) {
 	state.NumberOfFails[server]++
 	if state.NumberOfFails[server] == state.Tolerance {
 		delete(state.NumberOfPending, server)
+		delete(state.NumberOfFails, server)
 	}
 	state.Mutex.Unlock()
 }
