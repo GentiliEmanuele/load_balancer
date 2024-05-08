@@ -7,7 +7,6 @@ import (
 	"math"
 	"math/rand"
 	"net/rpc"
-	"strings"
 	"sync"
 	"time"
 )
@@ -17,6 +16,8 @@ type LoadBalancer struct {
 	NumberOfPending map[string]int //Maintain the number of pending request for each server
 	Mutex           sync.RWMutex
 	History         map[string]int
+	NumberOfFails   map[string]int
+	Tolerance       int
 }
 
 func (state *LoadBalancer) ServeRequest(args _types.Args, result *_types.Result) error {
@@ -56,15 +57,16 @@ func (state *LoadBalancer) AddNewServer(server _types.Server, updated *_types.Up
 }
 
 func (state *LoadBalancer) sendRequestToOneServer(service string, args _types.Args, result *_types.Result) error {
-	serverName := state.chooseServer("")
-	state.lockedIncrementPending(serverName)
-	server := state.connect(serverName)
+	server, serverName, err := state.connect()
+	if err != nil {
+		return err
+	}
 	done := server.Go(service, args.Input, result, nil)
 	done = <-done.Done
 	if done.Error != nil {
 		//If server fail during computation we exclude it from load balancing
 		fmt.Printf("An error occurred %s\n", done.Error)
-		state.lockedDeleteItem(serverName)
+		state.handleServerFailure(serverName)
 		return done.Error
 	}
 	state.lockedDecrementPending(serverName)
@@ -73,26 +75,29 @@ func (state *LoadBalancer) sendRequestToOneServer(service string, args _types.Ar
 
 func (state *LoadBalancer) sendRequestToTwoServer(service string, args _types.Args, result *_types.Result) (error, error) {
 	//Choose the two server and count the new request
-	serverName1 := state.chooseServer("")
-	serverName2 := state.chooseServer(serverName1)
-	state.lockedIncrementPending(serverName1)
-	state.lockedIncrementPending(serverName2)
-	server1 := state.connect(serverName1)
-	server2 := state.connect(serverName2)
+	server1, serverName1, err1 := state.connect()
+	//If connection not return a server mean that all server are fail
+	if server1 == nil && err1 != nil {
+		return err1, err1
+	}
+	server2, serverName2, err2 := state.connect()
+	if server2 == nil && err2 != nil {
+		return err2, err2
+	}
 	done1 := server1.Go(service, args.Input, result, nil)
 	done2 := server2.Go(service, args.Input, result, nil)
 	select {
 	case <-done1.Done:
 		if done1.Error != nil {
 			//If during computation the server has got an error we remove it from scheduling
-			fmt.Printf("Error: %s\n", done1.Error)
-			state.lockedDeleteItem(serverName1)
+			fmt.Printf("An error occurred: %s\n", done1.Error)
+			state.handleServerFailure(serverName1)
 			select {
 			//If the first server fail, wait the second server
 			case <-done2.Done:
 				if done2.Error != nil {
-					state.lockedDeleteItem(serverName2)
-					fmt.Printf("The servers %s and %s were failed, search new servers\n", serverName1, serverName2)
+					state.handleServerFailure(serverName2)
+					fmt.Printf("The servers %s and %s do not respond, try to choose new servers\n", serverName1, serverName2)
 					return done1.Error, done2.Error
 				} else {
 					return done1.Error, nil
@@ -114,13 +119,13 @@ func (state *LoadBalancer) sendRequestToTwoServer(service string, args _types.Ar
 		if done2.Error != nil {
 			//If during computation the server has got an error we remove it from scheduling
 			fmt.Printf("An error occurred: %s\n", done2.Error)
-			state.lockedDeleteItem(serverName2)
+			state.handleServerFailure(serverName2)
 			select {
 			//If the first server fail, wait the second server
 			case <-done1.Done:
 				if done1.Error != nil {
-					state.lockedDeleteItem(serverName1)
-					fmt.Printf("The servers %s and %s were failed, search new servers\n", serverName1, serverName2)
+					state.handleServerFailure(serverName1)
+					fmt.Printf("The servers %s and %s do not respond, try to choose new servers\n", serverName1, serverName2)
 					return done1.Error, done2.Error
 				} else {
 					return nil, done2.Error
@@ -156,11 +161,9 @@ func (state *LoadBalancer) waitOneAvailableServer() error {
 	}
 }
 
-func (state *LoadBalancer) chooseServer(ignoredServer string) string {
+func (state *LoadBalancer) chooseServer() string {
 	if len(state.NumberOfPending) == 1 {
-		state.Mutex.Lock()
 		for key := range state.NumberOfPending {
-			state.Mutex.Unlock()
 			return key
 		}
 	}
@@ -168,7 +171,7 @@ func (state *LoadBalancer) chooseServer(ignoredServer string) string {
 		fmt.Printf("No server available now \n")
 		return ""
 	} else {
-		minLoadServers := state.findMinus(ignoredServer)
+		minLoadServers := state.findMinus()
 		if len(minLoadServers)-1 != 0 {
 			index := rand.Intn(len(minLoadServers) - 1)
 			return minLoadServers[index]
@@ -178,43 +181,46 @@ func (state *LoadBalancer) chooseServer(ignoredServer string) string {
 	}
 }
 
-func (state *LoadBalancer) findMinus(ignored string) []string {
-	state.Mutex.Lock()
+func (state *LoadBalancer) findMinus() []string {
 	minServers := make([]string, 0)
 	minLoad := math.MaxInt
 	//Find min load
-	for s, load := range state.NumberOfPending {
-		if load < minLoad && strings.Compare(s, ignored) != 0 {
+	for _, load := range state.NumberOfPending {
+		if load < minLoad {
 			minLoad = load
 		}
 	}
 	//group by min load
 	for s, load := range state.NumberOfPending {
-		if load == minLoad && strings.Compare(s, ignored) != 0 {
+		if load == minLoad {
 			minServers = append(minServers, s)
 		}
 	}
-	state.Mutex.Unlock()
 	return minServers
 }
 
-func (state *LoadBalancer) connect(serverName string) *rpc.Client {
+func (state *LoadBalancer) connect() (*rpc.Client, string, error) {
 	state.Mutex.Lock()
-	server, err := rpc.Dial("tcp", serverName)
-	if err != nil {
-		fmt.Printf("An error occurred %s on the serverName %s", err, serverName)
-		//Delete the server from the balancing list
-		state.lockedDeleteItem(serverName)
-		state.Mutex.Unlock()
+	defer state.Mutex.Unlock()
+	var server *rpc.Client
+	var serverName string
+	var err error
+	for {
+		serverName = state.chooseServer()
+		server, err = rpc.Dial("tcp", serverName)
+		if err != nil {
+			state.NumberOfFails[serverName]++
+			if state.NumberOfFails[serverName] > state.Tolerance {
+				delete(state.NumberOfPending, serverName)
+			}
+			if len(state.NumberOfPending) == 0 {
+				return nil, "", err
+			}
+		} else {
+			state.NumberOfPending[serverName]++
+			return server, serverName, nil
+		}
 	}
-	state.Mutex.Unlock()
-	return server
-}
-
-func (state *LoadBalancer) lockedIncrementPending(server string) {
-	state.Mutex.Lock()
-	state.NumberOfPending[server]++
-	state.Mutex.Unlock()
 }
 
 func (state *LoadBalancer) lockedDecrementPending(server string) {
@@ -223,15 +229,19 @@ func (state *LoadBalancer) lockedDecrementPending(server string) {
 	state.Mutex.Unlock()
 }
 
-func (state *LoadBalancer) lockedDeleteItem(server string) {
+func (state *LoadBalancer) handleServerFailure(server string) {
 	state.Mutex.Lock()
-	delete(state.NumberOfPending, server)
+	state.NumberOfFails[server]++
+	if state.NumberOfFails[server] == state.Tolerance {
+		delete(state.NumberOfPending, server)
+	}
 	state.Mutex.Unlock()
 }
 
 func (state *LoadBalancer) lockedAddNewItem(server string) {
 	state.Mutex.Lock()
 	state.NumberOfPending[server] = 0
+	state.NumberOfFails[server] = 0
 	state.Mutex.Unlock()
 }
 

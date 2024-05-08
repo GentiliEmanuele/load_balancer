@@ -24,6 +24,8 @@ func playOnLoadBalancer(port string) {
 		NumberOfPending: make(map[string]int),
 		Mutex:           sync.RWMutex{},
 		History:         make(map[string]int),
+		NumberOfFails:   make(map[string]int),
+		Tolerance:       0,
 	}
 	//Wait request from client and update from registry
 	err := loadBalancer.RegisterName("LoadBalancer", &loadBalancerState)
